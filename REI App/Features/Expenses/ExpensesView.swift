@@ -5,6 +5,7 @@ import UIKit
 struct ExpensesView: View {
     @EnvironmentObject private var dataManager: DataManager
     @State private var activeTab = 0
+    @State private var previousTab = 0
     @State private var showingAddExpenseSheet = false
     @State private var showingAddBudgetSheet = false
     @State private var showingAddTotalAmountSheet = false
@@ -12,6 +13,7 @@ struct ExpensesView: View {
     @State private var editingBudget: Budget? = nil
     @State private var searchText = ""
     @State private var timeFilter: TimeFilter = .month
+    @State private var animateTab = false
     
     enum TimeFilter: String, CaseIterable, Identifiable {
         case week = "Week"
@@ -63,33 +65,50 @@ struct ExpensesView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Segment control for tab selection
+            // Segment control for tab selection with animation
             SegmentedPicker(
                 items: ["Expenses", "Budgets", "Insights"],
                 selectedIndex: $activeTab
             )
             .padding()
-            
-            // Total amount display
-          if dataManager.totalAmount != nil {
-                totalAmountDisplay
+            .onChange(of: activeTab) { newValue in
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    animateTab = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        animateTab = false
+                    }
+                }
+                previousTab = newValue
             }
             
-            // Tab content
+            // Total amount display
+            if dataManager.totalAmount != nil {
+                totalAmountDisplay
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .animation(.spring(response: 0.4, dampingFraction: 0.8), value: dataManager.getTotalAmountAfterExpenses())
+            }
+            
+            // Tab content with animated transitions
             TabView(selection: $activeTab) {
                 // Tab 1: Expenses List
                 expensesListView
                     .tag(0)
+                    .transition(tabTransition(from: previousTab, to: activeTab))
                 
                 // Tab 2: Budgets
                 budgetsView
                     .tag(1)
+                    .transition(tabTransition(from: previousTab, to: activeTab))
                 
                 // Tab 3: Insights
                 insightsView
                     .tag(2)
+                    .transition(tabTransition(from: previousTab, to: activeTab))
             }
             .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: activeTab)
         }
         .navigationTitle("Expenses")
         .sheet(isPresented: $showingAddExpenseSheet) {
@@ -138,6 +157,15 @@ struct ExpensesView: View {
                     .environmentObject(dataManager)
             }
         }
+    }
+    
+    // Function to determine the appropriate transition based on tab navigation direction
+    private func tabTransition(from previousTab: Int, to currentTab: Int) -> AnyTransition {
+        let isMovingRight = currentTab > previousTab
+        return .asymmetric(
+            insertion: .move(edge: isMovingRight ? .trailing : .leading).combined(with: .opacity),
+            removal: .move(edge: isMovingRight ? .leading : .trailing).combined(with: .opacity)
+        )
     }
     
     // Total amount display
@@ -669,24 +697,34 @@ struct ExpenseRow: View {
     let expense: Expense
     var onUpdate: (Expense) -> Void = { _ in }
     var onDelete: (Expense) -> Void = { _ in }
-    @State private var isLongPressing = false
+    @State private var isPressed = false
     
     var body: some View {
         Button(action: {
-            onUpdate(expense)
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                onUpdate(expense)
+            }
         }) {
             HStack(spacing: 15) {
+                // Category icon with animation
                 Circle()
                     .fill(expense.category.color)
                     .frame(width: 40, height: 40)
                     .overlay(
                         Image(systemName: expense.category.icon)
                             .foregroundColor(.white)
+                            .font(.system(size: isPressed ? 16 : 14))
+                            .animation(.spring(response: 0.3), value: isPressed)
                     )
+                    .scaleEffect(isPressed ? 1.1 : 1.0)
+                    .shadow(color: expense.category.color.opacity(0.5), radius: isPressed ? 8 : 3, x: 0, y: isPressed ? 3 : 1)
+                    .animation(.spring(response: 0.3), value: isPressed)
                 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(expense.title)
                         .font(.headline)
+                        .foregroundColor(isPressed ? expense.category.color : .primary)
+                        .animation(.easeInOut, value: isPressed)
                     
                     Text(expense.date.formatted(date: .abbreviated, time: .omitted))
                         .font(.caption)
@@ -698,8 +736,16 @@ struct ExpenseRow: View {
                 Text("\(CURRENCY_SYMBOL)\(expense.amount, specifier: "%.2f")")
                     .font(.headline)
                     .foregroundColor(.red)
+                    .scaleEffect(isPressed ? 1.05 : 1.0)
+                    .animation(.spring(response: 0.3), value: isPressed)
             }
             .padding(.vertical, 8)
+            .padding(.horizontal, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.01))
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
         .contextMenu(menuItems: {
@@ -723,6 +769,19 @@ struct ExpenseRow: View {
                     triggerHapticFeedback()
                 }
         )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
+                        isPressed = true
+                    }
+                }
+                .onEnded { _ in
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
+                        isPressed = false
+                    }
+                }
+        )
     }
     
     private func triggerHapticFeedback() {
@@ -734,41 +793,94 @@ struct ExpenseRow: View {
 // MARK: - Expense Preview for Context Menu
 struct ExpensePreview: View {
     let expense: Expense
+    @State private var animate = false
     
     var body: some View {
-        VStack(spacing: 15) {
-            Circle()
-                .fill(expense.category.color)
-                .frame(width: 60, height: 60)
-                .overlay(
-                    Image(systemName: expense.category.icon)
-                        .foregroundColor(.white)
-                        .font(.system(size: 28))
-                )
+        VStack(spacing: 20) {
+            // Animated Category Circle
+            ZStack {
+                Circle()
+                    .fill(expense.category.color.opacity(0.1))
+                    .frame(width: 90, height: 90)
+                    .scaleEffect(animate ? 1.1 : 1.0)
+                
+                Circle()
+                    .fill(expense.category.color.opacity(0.3))
+                    .frame(width: 75, height: 75)
+                    .scaleEffect(animate ? 1.15 : 1.0)
+                
+                Circle()
+                    .fill(expense.category.color)
+                    .frame(width: 60, height: 60)
+                    .shadow(color: expense.category.color.opacity(0.5), radius: animate ? 8 : 4, x: 0, y: animate ? 3 : 1)
+                    .overlay(
+                        Image(systemName: expense.category.icon)
+                            .foregroundColor(.white)
+                            .font(.system(size: 28))
+                            .scaleEffect(animate ? 1.1 : 1.0)
+                    )
+            }
+            .animation(Animation.spring(response: 0.5, dampingFraction: 0.6).repeatForever(autoreverses: true), value: animate)
             
+            // Title with decorative elements
             Text(expense.title)
                 .font(.headline)
-            
-            Text("\(CURRENCY_SYMBOL)\(expense.amount, specifier: "%.2f")")
-                .font(.title3)
-                .foregroundColor(.red)
                 .fontWeight(.bold)
-                .padding(.horizontal)
-          
-            Text(expense.date.formatted(date: .abbreviated, time: .omitted))
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(expense.category.color.opacity(0.1))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(expense.category.color.opacity(0.3), lineWidth: 1)
+                )
+            
+            // Amount with highlighting
+            Text("\(CURRENCY_SYMBOL)\(expense.amount, specifier: "%.2f")")
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .foregroundColor(.red)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(UIColor.tertiarySystemBackground))
+                        .shadow(color: Color.black.opacity(0.07), radius: 3, x: 0, y: 2)
+                )
+                .scaleEffect(animate ? 1.03 : 1.0)
+                .animation(Animation.spring(response: 0.4, dampingFraction: 0.6).repeatForever(autoreverses: true).delay(0.1), value: animate)
+            
+            // Date with icon
+            HStack {
+                Image(systemName: "calendar")
+                    .foregroundColor(expense.category.color)
+                    .opacity(0.8)
+                Text(expense.date.formatted(date: .abbreviated, time: .omitted))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.top, 5)
         }
-        .padding()
-        .background(Color(UIColor.secondarySystemBackground))
-        .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(UIColor.secondarySystemBackground))
+                .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 5)
+        )
+        .onAppear {
+            // Start the animation when the view appears
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                animate = true
+            }
+        }
     }
 }
 
 // MARK: - Budget Card Component
 struct BudgetCard: View {
     @EnvironmentObject private var dataManager: DataManager
+    @State private var isPressed = false
     let budget: Budget
     
     private var totalSpent: Double {
@@ -785,21 +897,21 @@ struct BudgetCard: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Budget header view
+        VStack(alignment: .leading, spacing: 16) {
+            // Budget header view with animated elements
             budgetHeaderView
             
-            // Progress view
+            // Progress view with animated transitions
             progressView
             
-            // Remaining amount view
+            // Remaining amount view with color transitions
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Spent")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Text("\(CURRENCY_SYMBOL)\(totalSpent, specifier: "%.2f")")
-                        .font(.subheadline)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundColor(.red)
                 }
                 
@@ -810,25 +922,55 @@ struct BudgetCard: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Text("\(CURRENCY_SYMBOL)\(remaining, specifier: "%.2f")")
-                        .font(.subheadline)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundColor(remaining < 0 ? .red : .green)
                 }
             }
         }
-        .padding()
-        .background(Color(UIColor.secondarySystemBackground))
-        .cornerRadius(12)
+        .padding(20)
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(UIColor.secondarySystemBackground))
+                    .shadow(color: Color.black.opacity(0.08), radius: isPressed ? 12 : 5, x: 0, y: isPressed ? 6 : 2)
+                
+                if budget.category != nil {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(budget.category?.color.opacity(0.3) ?? Color.clear, lineWidth: 1.5)
+                }
+                
+                // Subtle gradient overlay for depth
+                LinearGradient(
+                    gradient: Gradient(colors: [Color.white.opacity(0.07), Color.white.opacity(0)]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+            }
+        )
+        .scaleEffect(isPressed ? 0.98 : 1.0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isPressed)
+        .onTapGesture {
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
+                isPressed = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
+                    isPressed = false
+                }
+            }
+        }
     }
     
     private var budgetHeaderView: some View {
         HStack {
-          if budget.category != nil {
+            if budget.category != nil {
                 categoryTag
             }
             
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(budget.name)
-                    .font(.headline)
+                    .font(.system(size: 18, weight: .bold))
                     .lineLimit(1)
                 
                 Text("\(budget.startDate.formatted(date: .abbreviated, time: .omitted)) - \(budget.endDate.formatted(date: .abbreviated, time: .omitted))")
@@ -839,7 +981,7 @@ struct BudgetCard: View {
             Spacer()
             
             Text("\(CURRENCY_SYMBOL)\(budget.amount, specifier: "%.2f")")
-                .font(.headline)
+                .font(.system(size: 18, weight: .bold, design: .rounded))
         }
     }
     
@@ -847,37 +989,40 @@ struct BudgetCard: View {
         ZStack {
             Rectangle()
                 .fill(budget.category?.color ?? .gray)
-                .frame(width: 4)
-                .cornerRadius(2)
+                .frame(width: 6)
+                .cornerRadius(3)
         }
-        .frame(width: 4, height: 35)
-        .padding(.trailing, 8)
+        .frame(width: 6, height: 40)
+        .padding(.trailing, 12)
     }
     
     private var progressView: some View {
         VStack(spacing: 8) {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    Rectangle()
+                    // Background track
+                    RoundedRectangle(cornerRadius: 6)
                         .fill(Color.gray.opacity(0.2))
-                        .frame(height: 8)
-                        .cornerRadius(4)
+                        .frame(height: 12)
                     
-                    Rectangle()
+                    // Progress bar with animation
+                    RoundedRectangle(cornerRadius: 6)
                         .fill(
-                            progressPercentage > 100 
-                            ? Color.red 
-                            : (progressPercentage > 80 ? Color.orange : Color.blue)
+                            LinearGradient(
+                                gradient: Gradient(colors: progressColors),
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
                         )
-                        .frame(width: min(CGFloat(progressPercentage / 100) * geometry.size.width, geometry.size.width), height: 8)
-                        .cornerRadius(4)
+                        .frame(width: min(CGFloat(progressPercentage / 100) * geometry.size.width, geometry.size.width), height: 12)
+                        .animation(.spring(response: 0.6, dampingFraction: 0.7), value: progressPercentage)
                 }
             }
-            .frame(height: 8)
+            .frame(height: 12)
             
             HStack {
                 Text("\(Int(progressPercentage))% used")
-                    .font(.caption)
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(
                         progressPercentage > 100 
                         ? .red 
@@ -885,7 +1030,35 @@ struct BudgetCard: View {
                     )
                 
                 Spacer()
+                
+                // Show overspent warning if applicable
+                if progressPercentage > 100 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12))
+                        Text("Overspent")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(Color.red.opacity(0.1))
+                    )
+                }
             }
+        }
+    }
+    
+    // Dynamic color array based on progress percentage
+    private var progressColors: [Color] {
+        if progressPercentage >= 100 {
+            return [Color.red.opacity(0.7), Color.red]
+        } else if progressPercentage >= 80 {
+            return [Color.orange.opacity(0.7), Color.orange]
+        } else {
+            return [Color.blue.opacity(0.7), Color.blue]
         }
     }
 }
@@ -1379,21 +1552,51 @@ struct ExpensesView_Previews: PreviewProvider {
 struct CircularProgressView: View {
     let progress: Double
     let color: Color
+    @State private var animateProgress = false
     
     var body: some View {
         ZStack {
+            // Background track
             Circle()
-                .stroke(color.opacity(0.2), lineWidth: 5)
+                .stroke(color.opacity(0.2), lineWidth: 8)
+                .shadow(color: color.opacity(0.1), radius: 3, x: 0, y: 1)
             
+            // Progress ring with gradient
             Circle()
-                .trim(from: 0, to: CGFloat(progress))
-                .stroke(color, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .trim(from: 0, to: animateProgress ? CGFloat(progress) : 0)
+                .stroke(
+                    LinearGradient(
+                        gradient: Gradient(colors: [color.opacity(0.7), color]),
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                )
                 .rotationEffect(.degrees(-90))
-                .animation(.linear, value: progress)
+                .shadow(color: color.opacity(0.3), radius: 2, x: 0, y: 1)
+                .animation(.easeOut(duration: 1.0), value: animateProgress)
             
-            Text("\(Int(progress * 100))%")
-                .font(.system(size: 10))
-                .fontWeight(.bold)
+            // Percentage text
+            VStack(spacing: 0) {
+                Text("\(Int(progress * 100))")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                
+                Text("%")
+                    .font(.system(size: 8, weight: .bold))
+                    .offset(y: -2)
+            }
+            .foregroundColor(color)
+            .opacity(animateProgress ? 1.0 : 0.0)
+            .scaleEffect(animateProgress ? 1.0 : 0.5)
+            .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.5), value: animateProgress)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                animateProgress = true
+            }
+        }
+        .onDisappear {
+            animateProgress = false
         }
     }
 }
@@ -1401,25 +1604,40 @@ struct CircularProgressView: View {
 struct TotalAmountView: View {
     @EnvironmentObject private var dataManager: DataManager
     @Binding var showingEditSheet: Bool
+    @State private var animate = false
+    @State private var isPulsing = false
     
     var body: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 10) {
             HStack {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("Total Amount")
-                        .font(.subheadline)
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.secondary)
+                        .opacity(animate ? 1 : 0)
+                        .offset(y: animate ? 0 : 5)
+                        .animation(.easeOut(duration: 0.4).delay(0.2), value: animate)
                     
                     if let totalAmount = dataManager.totalAmount {
                         Text("\(CURRENCY_SYMBOL)\(totalAmount.amount, specifier: "%.2f")")
-                            .font(.title)
-                            .fontWeight(.bold)
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundColor(.primary)
+                            .scaleEffect(animate ? 1.0 : 0.9, anchor: .leading)
+                            .opacity(animate ? 1 : 0)
+                            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: animate)
                         
                         if !totalAmount.description.isEmpty {
                             Text(totalAmount.description)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.secondary.opacity(0.1))
+                                )
+                                .opacity(animate ? 1 : 0)
+                                .animation(.easeOut(duration: 0.4).delay(0.5), value: animate)
                         }
                     } else {
                         Text("Not set")
@@ -1432,51 +1650,96 @@ struct TotalAmountView: View {
                 Spacer()
                 
                 Button(action: {
-                    showingEditSheet = true
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        showingEditSheet = true
+                    }
                 }) {
                     Image(systemName: "pencil")
-                        .padding(10)
-                        .background(Color.blue.opacity(0.1))
-                        .clipShape(Circle())
-                        .foregroundColor(.blue)
+                        .font(.system(size: 16, weight: .semibold))
+                        .padding(12)
+                        .background(
+                            Circle()
+                                .fill(LinearGradient(
+                                    gradient: Gradient(colors: [Color.blue.opacity(0.7), Color.blue.opacity(0.9)]),
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ))
+                        )
+                        .foregroundColor(.white)
+                        .shadow(color: Color.blue.opacity(0.3), radius: isPulsing ? 8 : 5, x: 0, y: isPulsing ? 4 : 2)
+                        .scaleEffect(isPulsing ? 1.05 : 1.0)
+                        .animation(Animation.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: isPulsing)
                 }
+                .opacity(animate ? 1 : 0)
+                .animation(.easeOut(duration: 0.4).delay(0.6), value: animate)
             }
             
             if dataManager.hasTotalAmountSet() {
+                // Divider with animation
+                Rectangle()
+                    .fill(Color.gray.opacity(0.15))
+                    .frame(height: 1)
+                    .padding(.vertical, 5)
+                    .scaleEffect(x: animate ? 1 : 0, anchor: .leading)
+                    .animation(.easeOut(duration: 0.6).delay(0.4), value: animate)
+                
                 HStack(spacing: 20) {
+                    // Spent amount
                     VStack(alignment: .leading) {
                         Text("Spent")
                             .font(.caption)
                             .foregroundColor(.secondary)
                         Text("\(CURRENCY_SYMBOL)\(dataManager.getSpentAmount(), specifier: "%.2f")")
-                            .font(.subheadline)
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
                             .foregroundColor(.red)
                     }
+                    .opacity(animate ? 1 : 0)
+                    .offset(y: animate ? 0 : 10)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.5), value: animate)
                     
+                    // Remaining amount
                     VStack(alignment: .leading) {
                         Text("Remaining")
                             .font(.caption)
                             .foregroundColor(.secondary)
                         Text("\(CURRENCY_SYMBOL)\(dataManager.getTotalAmountAfterExpenses(), specifier: "%.2f")")
-                            .font(.subheadline)
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
                             .foregroundColor(.green)
                     }
+                    .opacity(animate ? 1 : 0)
+                    .offset(y: animate ? 0 : 10)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.6), value: animate)
                     
                     Spacer()
                     
+                    // Animated circular progress
                     CircularProgressView(
                         progress: min(1.0, dataManager.getSpentPercentage() / 100),
                         color: dataManager.getSpentPercentage() > 90 ? .red : .blue
                     )
-                    .frame(width: 40, height: 40)
+                    .frame(width: 50, height: 50)
+                    .scaleEffect(animate ? 1.0 : 0.5)
+                    .opacity(animate ? 1 : 0)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.7), value: animate)
                 }
-                .padding(.top, 10)
             }
         }
-        .padding()
-        .background(Color(UIColor.secondarySystemBackground))
-        .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(UIColor.secondarySystemBackground))
+                .shadow(color: Color.black.opacity(0.08), radius: 15, x: 0, y: 5)
+        )
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                animate = true
+                isPulsing = true
+            }
+        }
+        .onDisappear {
+            animate = false
+            isPulsing = false
+        }
     }
 }
 
@@ -1495,3 +1758,4 @@ struct AllBudgetsView: View {
         .navigationTitle("All Budgets")
     }
 } 
+

@@ -79,7 +79,7 @@ struct Expense: Identifiable, Codable, Equatable {
 }
 
 // MARK: - TotalAmount Model
-struct TotalAmount: Codable, Identifiable {
+struct TotalAmount: Codable, Identifiable, Equatable {
     var id: UUID
     var amount: Double
     var description: String
@@ -90,6 +90,13 @@ struct TotalAmount: Codable, Identifiable {
         self.amount = amount
         self.description = description
         self.lastUpdated = Date()
+    }
+    
+    static func == (lhs: TotalAmount, rhs: TotalAmount) -> Bool {
+        return lhs.id == rhs.id && 
+               lhs.amount == rhs.amount && 
+               lhs.description == rhs.description &&
+               lhs.lastUpdated == rhs.lastUpdated
     }
 }
 
