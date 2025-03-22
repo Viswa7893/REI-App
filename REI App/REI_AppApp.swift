@@ -9,12 +9,17 @@ import SwiftUI
 
 @main
 struct REI_AppApp: App {
-    let persistenceController = PersistenceController.shared
-
+    @StateObject private var dataManager = DataManager()
+    
+    init() {
+        // Request notification permissions
+        NotificationManager.shared.requestAuthorization()
+    }
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .environmentObject(dataManager)
         }
     }
 }
